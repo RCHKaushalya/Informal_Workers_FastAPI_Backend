@@ -19,13 +19,15 @@ def register_user(user: UserCreate):
     db = get_db()
 
     db.execute(
-        "INSERT INTO users(nic, first_name, last_name, phone, language) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO users(nic, first_name, last_name, phone, language, district, ds) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             user.nic,
             user.first_name,
             user.last_name,
             user.phone,
             user.language,
+            user.district,
+            user.ds
         )
     )
 

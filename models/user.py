@@ -6,3 +6,5 @@ class UserCreate(BaseModel):
     last_name: str
     phone: str
     language: str
+    district: str
+    ds: str
