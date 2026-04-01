@@ -1,309 +1,339 @@
-from fastapi import FastAPI
+from __future__ import annotations
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+
 from database import get_db, init_db
-from models.user import UserCreate
-from models.skill import SkillCreate
-from models.job import JobCreate
+from models.user import UserCreate, UserLogin, UserUpdate
+from models.job import JobCreate, JobStatusUpdate
 
-app = FastAPI()
+app = FastAPI(title="Informal Workers API")
 
-@app.on_event('startup')
-def startup():
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def startup() -> None:
     init_db()
 
-@app.get('/')
+
+@app.get("/")
 def home():
-    return {'message': 'API running'}
+    return {"message": "API running"}
 
-@app.post('/register')
+
+@app.post("/auth/login")
+def login(payload: UserLogin):
+    with get_db() as db:
+        user = db.execute(
+            """
+            SELECT nic, first_name, last_name, district, ds_area, phone, language, pin, role, rating
+            FROM users
+            WHERE nic = ? AND pin = ?
+            """,
+            (payload.nic, payload.pin),
+        ).fetchone()
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid NIC or PIN")
+        return dict(user)
+
+
+@app.post("/register")
 def register_user(user: UserCreate):
-    db = get_db()
-
-    db.execute(
-        "INSERT INTO users(nic, first_name, last_name, phone, language, district, ds) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            user.nic,
-            user.first_name,
-            user.last_name,
-            user.phone,
-            user.language,
-            user.district,
-            user.ds
+    with get_db() as db:
+        existing = db.execute("SELECT nic FROM users WHERE nic = ?", (user.nic,)).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="User already exists")
+        db.execute(
+            """
+            INSERT INTO users(nic, first_name, last_name, phone, language, district, ds_area, pin, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'user')
+            """,
+            (
+                user.nic,
+                user.first_name,
+                user.last_name,
+                user.phone,
+                user.language,
+                user.district,
+                user.ds_area,
+                user.pin,
+            ),
         )
-    )
+        db.commit()
+        created = db.execute(
+            """
+            SELECT nic, first_name, last_name, district, ds_area, phone, language, pin, role, rating
+            FROM users WHERE nic = ?
+            """,
+            (user.nic,),
+        ).fetchone()
+        return dict(created)
 
-    db.commit()
 
-    return {'message': 'User registered'}
-
-@app.get('/user/{nic}')
+@app.get("/user/{nic}")
 def get_user(nic: str):
-    db = get_db()
+    with get_db() as db:
+        user = db.execute(
+            """
+            SELECT nic, first_name, last_name, district, ds_area, phone, language, role, rating
+            FROM users WHERE nic = ?
+            """,
+            (nic,),
+        ).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return dict(user)
 
-    user = db.execute(
-        "SELECT * FROM users WHERE nic = ?",
-        (nic,)
-    ).fetchone()
 
-    if not user:
-        return {'error': 'User not found'}
-    
-    return dict(user)
+@app.patch("/user/{nic}")
+def update_user(nic: str, payload: UserUpdate):
+    updates: dict[str, object] = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        return {"message": "No changes"}
 
-@app.get('/user/{nic}/completed-jobs')
-def completed_jobs(nic: str):
-    db = get_db()
+    allowed = {"first_name", "last_name", "phone", "language", "district", "ds_area", "pin", "role"}
+    if any(k not in allowed for k in updates):
+        raise HTTPException(status_code=400, detail="Invalid fields")
 
-    count = db.execute(
-        "SELECT COUNT(*) AS total FROM applications WHERE user_nic = ? AND status = 'completed'",
-        (nic,)
-    ).fetchone()['total']
-
-    return {'completed jobs': count}
-
-@app.get('/user/{nic}/profile')
-def full_profile(nic: str):
-    db = get_db()
-
-    user = db.execute(
-        "SELECT * FROM users WHERE nic = ?",
-        (nic,)
-    ).fetchone()
-
-    if not user:
-        return {'error': 'User not found'}
-    
-    skills = db.execute(
-        """
-            SELECT skills.id, skills.name
-            FROM skills
-            JOIN user_skills On skills.id = user_skills.skill_id
-            WHERE user_skills.user_nic = ?
-        """,
-        (nic,)
-    ).fetchall()
-    
-    completed_jobs = db.execute(
-        "SELECT COUNT(*) AS total FROM applications WHERE user_nic = ? AND status = 'completed'",
-        (nic,)
-    ).fetchone()['total']
-
-    return {
-        'user': user,
-        'skills': [skill['name'] for skill in skills],
-        'completed_jobs': completed_jobs
-    }
-
-@app.post('/skills')
-def add_skill(skill: SkillCreate):
-    db = get_db()
-
-    try:
-        db.execute(
-            'INSERT INTO skills (name) VALUES (?)',
-            (skill.name,)
-        )
+    with get_db() as db:
+        row = db.execute("SELECT nic FROM users WHERE nic = ?", (nic,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        sets = ", ".join([f"{k} = ?" for k in updates.keys()])
+        db.execute(f"UPDATE users SET {sets} WHERE nic = ?", (*updates.values(), nic))
         db.commit()
-        return {'message': 'Skill added'}
-    except:
-        return {'error': 'Skill already added'}
+        user = db.execute(
+            """
+            SELECT nic, first_name, last_name, district, ds_area, phone, language, role, rating
+            FROM users WHERE nic = ?
+            """,
+            (nic,),
+        ).fetchone()
+        return dict(user)
 
-@app.post('/user/{nic}/skills/{skill_id}')
-def add_skill_to_user(nic: str, skill_id: int):
-    db = get_db()
 
-    try:
-        db.execute(
-            "INSERT INTO user_skills (user_nic, skill_id) VALUES (?, ?)",
-            (nic, skill_id)
-        )
+@app.get("/user/{nic}/skills")
+def get_user_skill_codes(nic: str):
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT skill_code FROM user_skill_codes WHERE user_nic = ? ORDER BY skill_code",
+            (nic,),
+        ).fetchall()
+        return [r["skill_code"] for r in rows]
+
+
+@app.put("/user/{nic}/skills")
+def replace_user_skill_codes(nic: str, skill_codes: list[str]):
+    with get_db() as db:
+        user = db.execute("SELECT nic FROM users WHERE nic = ?", (nic,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        db.execute("DELETE FROM user_skill_codes WHERE user_nic = ?", (nic,))
+        for code in skill_codes:
+            db.execute(
+                "INSERT OR IGNORE INTO user_skill_codes(user_nic, skill_code) VALUES (?, ?)",
+                (nic, code),
+            )
         db.commit()
-        return {'message': 'Skill assigned'}
-    except:
-        return {'error': 'Skill already assigned'}
-    
-@app.get('/user/{nic}/skills')
-def get_user_skills(nic: str):
-    db = get_db()
+        return {"message": "Skills updated", "skills": skill_codes}
 
-    skills = db.execute(
-        """
-            SELECT skills.id, skills.name
-            FROM skills
-            JOIN user_skills On skills.id = user_skills.skill_id
-            WHERE user_skills.user_nic = ?
-        """,
-        (nic,)
-    ).fetchall()
 
-    return [dict(skill) for skill in skills]
-
-@app.post('/jobs')
+@app.post("/jobs")
 def create_job(job: JobCreate):
-    db = get_db()
+    with get_db() as db:
+        employer = db.execute("SELECT nic FROM users WHERE nic = ?", (job.employer_nic,)).fetchone()
+        if not employer:
+            raise HTTPException(status_code=404, detail="Employer not found")
 
-    user = db.execute(
-        """
-            SELECT district, ds FROM users
-            WHERE nic = ?
-        """,
-        (job.employer_nic,)
-    ).fetchone()
+        cursor = db.execute(
+            """
+            INSERT INTO jobs(title, description, district, ds_area, location, date, time, status, employer_nic)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+            """,
+            (
+                job.title,
+                job.description,
+                job.district,
+                job.ds_area,
+                job.location,
+                job.date,
+                job.time,
+                job.employer_nic,
+            ),
+        )
+        job_id = cursor.lastrowid
 
-    cursor = db.execute(
-        """
-            INSERT INTO jobs(title, description, district, ds, employer_id, status) VALUES
-                (?, ?, ?, ?, ?, ?, 'open')
-        """,
-        (job.title, job.description, user['district'], user['ds'], job.employer_nic)
-    )
-
-    db.commit()
-
-    job_id = cursor.lastrowid
-
-    send_notification(job_id)
-
-    return {'message': 'Job Created', 'job_id': job_id}
-
-@app.get('/jobs')
-def get_jobs():
-    db =  get_db()
-
-    jobs = db.execute(
-        """
-            SELECT * FROM jobs
-            WHERE status = 'open'
-        """
-    ).fetchall()
-
-    return [dict(job) for job in jobs]
-
-@app.post('/jobs/{job_id}/apply/{nic}')
-def apply_job(job_id: int, nic: str):
-    db = get_db()
-
-    db.execute(
-        """
-            INSERT INTO applications (job_id, user_nic, status) VALUES
-            (?, ?, 'applied')
-        """,
-        (job_id, nic)
-    )
-    db.commit()
-
-    return {'message': 'Applied successfully'}
+        if job.skill_codes:
+            for code in job.skill_codes:
+                db.execute(
+                    "INSERT OR IGNORE INTO job_skill_codes(job_id, skill_code) VALUES (?, ?)",
+                    (job_id, code),
+                )
+        db.commit()
+        return {"message": "Job created", "job_id": job_id}
 
 
-@app.get('/jobs/{job_id}/applications')
+@app.get("/jobs")
+def get_jobs(
+    status: str = Query(default="open"),
+    district: str | None = None,
+    ds_area: str | None = None,
+):
+    query = "SELECT * FROM jobs WHERE status = ?"
+    params: list[object] = [status]
+    if district:
+        query += " AND district = ?"
+        params.append(district)
+    if ds_area:
+        query += " AND ds_area = ?"
+        params.append(ds_area)
+    query += " ORDER BY created_at DESC, id DESC"
+
+    with get_db() as db:
+        jobs = db.execute(query, tuple(params)).fetchall()
+        return [dict(job) for job in jobs]
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: int):
+    with get_db() as db:
+        job = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        skills = db.execute(
+            "SELECT skill_code FROM job_skill_codes WHERE job_id = ? ORDER BY skill_code",
+            (job_id,),
+        ).fetchall()
+        return {**dict(job), "skill_codes": [r["skill_code"] for r in skills]}
+
+
+@app.post("/jobs/{job_id}/apply")
+def apply_job(job_id: int, worker_nic: str):
+    with get_db() as db:
+        job = db.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        user = db.execute("SELECT nic FROM users WHERE nic = ?", (worker_nic,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Worker not found")
+        try:
+            db.execute(
+                "INSERT INTO applications(job_id, worker_nic, status) VALUES (?, ?, 'applied')",
+                (job_id, worker_nic),
+            )
+            db.commit()
+        except Exception:
+            raise HTTPException(status_code=409, detail="Already applied")
+        return {"message": "Applied successfully"}
+
+
+@app.get("/jobs/{job_id}/applications")
 def get_applications(job_id: int):
-    db = get_db()
-
-    applications = db.execute(
-        """
-            SELECT U.first_name, U.last_name, A.status
-            FROM users AS U
-            JOIN applications AS A ON U.nic = A.user_nic
+    with get_db() as db:
+        applications = db.execute(
+            """
+            SELECT A.worker_nic, U.first_name, U.last_name, U.phone, A.status, A.created_at
+            FROM applications AS A
+            JOIN users AS U ON U.nic = A.worker_nic
             WHERE A.job_id = ?
-        """,
-        (job_id,)
-    ).fetchall()
+            ORDER BY A.created_at DESC
+            """,
+            (job_id,),
+        ).fetchall()
+        return [dict(row) for row in applications]
 
-    return [dict(application) for application in applications]
 
-@app.post('/applications/{job_id}/{nic}/status')
-def update_applications(job_id: int, nic: str, status: str):
-    db = get_db()
-
-    db.execute(
-        """
-            UPDATE applications
-            SET status = ?
-            WHERE job_id = ? AND user_nic = ?
-        """,
-        (status, job_id, nic)
-    )
-    db.commit()
-
-    return {'message': 'Status updated'}
-
-@app.post('/applications/{job_id}/{nic}/completed')
-def update_applications(job_id: int, nic: str):
-    db = get_db()
-
-    db.execute(
-        """
-            UPDATE applications
-            SET status = 'completed'
-            WHERE job_id = ? AND user_nic = ?
-        """,
-        (job_id, nic)
-    )
-    db.commit()
-
-    return {'message': 'Job marked as completed'}
-
-@app.post('/jobs/{job_id}/skills/{skill_id}')
-def add_skill_to_job(job_id: int, skill_id: int):
-    db = get_db()
-
-    try:
+@app.patch("/jobs/{job_id}/applications/{worker_nic}")
+def update_application_status(job_id: int, worker_nic: str, payload: JobStatusUpdate):
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM applications WHERE job_id = ? AND worker_nic = ?",
+            (job_id, worker_nic),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Application not found")
         db.execute(
-            "INSERT INTO job_skills (job_id, skill_id) VALUES (?, ?)",
-            (job_id, skill_id)
+            "UPDATE applications SET status = ? WHERE job_id = ? AND worker_nic = ?",
+            (payload.status, job_id, worker_nic),
         )
         db.commit()
-        return {'message': 'Skill assigned to job'}
-    except:
-        return {'error': 'Skill already assigned'}
-    
-@app.get('/job/{nic}/skills')
-def get_job_skills(job_id: int):
-    db = get_db()
+        return {"message": "Status updated"}
 
-    skills = db.execute(
-        """
-            SELECT skills.id, skills.name
-            FROM skills
-            JOIN job_skills On skills.id = job_skills.skill_id
-            WHERE job_skills.job_id = ?
-        """,
-        (job_id,)
-    ).fetchall()
 
-    return [dict(skill) for skill in skills]
+@app.post("/jobs/{job_id}/reviews")
+def create_review(job_id: int, worker_nic: str, employer_nic: str, rating: int, comment: str | None = None):
+    if rating < 1 or rating > 5:
+        raise HTTPException(status_code=400, detail="Rating must be 1..5")
+    with get_db() as db:
+        try:
+            db.execute(
+                """
+                INSERT INTO reviews(job_id, worker_nic, employer_nic, rating, comment)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (job_id, worker_nic, employer_nic, rating, comment),
+            )
+            db.commit()
+        except Exception:
+            raise HTTPException(status_code=409, detail="Review already exists")
+        return {"message": "Review created"}
 
-def find_matching_users(job_id: int):
-    db = get_db()
 
-    job = db.execute(
-        """
-            SELECT district FROM jobs WHERE id = ?
-        """,
-        (job_id,)
-    ).fetchone()
+@app.get("/admin/users")
+def admin_list_users(role: str | None = None):
+    query = "SELECT nic, first_name, last_name, phone, language, district, ds_area, role, rating FROM users"
+    params: list[object] = []
+    if role:
+        query += " WHERE role = ?"
+        params.append(role)
+    query += " ORDER BY first_name, last_name"
+    with get_db() as db:
+        rows = db.execute(query, tuple(params)).fetchall()
+        return [dict(r) for r in rows]
 
-    users = db.execute(
-        """
+
+@app.get("/admin/jobs")
+def admin_list_jobs(status: str | None = None):
+    query = "SELECT * FROM jobs"
+    params: list[object] = []
+    if status:
+        query += " WHERE status = ?"
+        params.append(status)
+    query += " ORDER BY created_at DESC, id DESC"
+    with get_db() as db:
+        rows = db.execute(query, tuple(params)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def _send_notification_placeholder(phone: str, message: str) -> None:
+    # Integrate with your phone SMS gateway app here.
+    print(f"SMS to {phone}: {message}")
+
+
+@app.post("/jobs/{job_id}/notify")
+def notify(job_id: int):
+    with get_db() as db:
+        job = db.execute("SELECT id, title, district FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        users = db.execute(
+            """
             SELECT DISTINCT U.nic, U.phone
             FROM users AS U
-            JOIN user_skills AS US ON U.nic = US.user_nic
-            JOIN job_skills AS JS ON US.skill_id = AS.skill_id
+            JOIN user_skill_codes AS US ON U.nic = US.user_nic
+            JOIN job_skill_codes AS JS ON US.skill_code = JS.skill_code
             WHERE JS.job_id = ?
             AND U.district = ?
-        """,
-        (job_id, job['district'])
-    ).fetchall()
-
-    return users
-
-def send_notification(job_id: int):
-    users = find_matching_users(job_id)
-
-    for user in users:
-        phone = user['phone']
-        print(f"📩 SMS to {phone}: New job available! Check app.")
-
-@app.post('/jobs/{job_id}/notify')
-def notify(job_id: int):
-    send_notification(job_id)
-    return {'message': 'Notification Sent'}
+            """,
+            (job_id, job["district"]),
+        ).fetchall()
+        for user in users:
+            _send_notification_placeholder(user["phone"], f"New job available: {job['title']}")
+        return {"message": "Notification triggered", "recipients": len(users)}
