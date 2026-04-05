@@ -45,6 +45,16 @@ def init_db() -> None:
         cursor.execute("ALTER TABLE users ADD COLUMN ds_area TEXT")
         cursor.execute("UPDATE users SET ds_area = COALESCE(ds_area, ds)")
 
+    # Ensure critical columns exist for new auth system
+    if not _column_exists(cursor, "users", "pin"):
+        cursor.execute("ALTER TABLE users ADD COLUMN pin TEXT DEFAULT '1234'")
+    
+    if not _column_exists(cursor, "users", "role"):
+        cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+        
+    if not _column_exists(cursor, "users", "rating"):
+        cursor.execute("ALTER TABLE users ADD COLUMN rating REAL DEFAULT 0")
+
     # Jobs posted by employers (any user can be employer)
     cursor.execute(
         """
