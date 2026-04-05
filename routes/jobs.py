@@ -28,8 +28,8 @@ def create_job(job: JobCreate):
         )
         job_id = cursor.lastrowid
         
-        if job.skills:
-            for skill_code in job.skills:
+        if job.skill_codes:
+            for skill_code in job.skill_codes:
                 db.execute(
                     "INSERT INTO job_skill_codes(job_id, skill_code) VALUES (?, ?)",
                     (job_id, skill_code),

@@ -78,4 +78,7 @@ def upgrade_user_to_volunteer(nic: str):
         db.commit()
         
         updated = db.execute("SELECT * FROM users WHERE nic = ?", (nic,)).fetchone()
-        return dict(updated)
+        res = dict(updated)
+        if "pin" in res:
+            del res["pin"]
+        return res
