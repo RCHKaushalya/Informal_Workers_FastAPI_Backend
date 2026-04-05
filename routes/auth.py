@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from database import get_db
 from models.user import UserCreate, UserLogin
 import sqlite3
+import json
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 

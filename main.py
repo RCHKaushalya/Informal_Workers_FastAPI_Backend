@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routes import auth, users, jobs, integration, legacy
+from routes import auth, users, jobs, integration, legacy, admin
 
 app = FastAPI(title="Informal Workers API | Premium Optimized")
 
@@ -28,6 +28,7 @@ app.include_router(users.router)
 app.include_router(jobs.router)
 app.include_router(integration.router)
 app.include_router(legacy.router)
+app.include_router(admin.router)
 
 _logger = logging.getLogger("keepalive")
 _self_ping_started = False

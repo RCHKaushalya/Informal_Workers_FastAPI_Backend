@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from database import get_db
 from models.user import UserUpdate
+import sqlite3
 
 router = APIRouter(prefix="/user", tags=["Users"])
 
@@ -12,7 +13,8 @@ def get_full_profile(nic: str):
             raise HTTPException(status_code=404, detail="User not found")
         
         user_dict = dict(user)
-        del user_dict["pin"]
+        if "pin" in user_dict:
+            del user_dict["pin"]
 
         # Skills
         skills = db.execute(
@@ -64,3 +66,16 @@ def get_user_registry():
     with get_db() as db:
         users = db.execute("SELECT nic, first_name, last_name, role, district, rating FROM users").fetchall()
         return [dict(u) for u in users]
+
+@router.post("/{nic}/upgrade-to-volunteer")
+def upgrade_user_to_volunteer(nic: str):
+    with get_db() as db:
+        user = db.execute("SELECT nic FROM users WHERE nic = ?", (nic,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        db.execute("UPDATE users SET role = 'volunteer' WHERE nic = ?", (nic,))
+        db.commit()
+        
+        updated = db.execute("SELECT * FROM users WHERE nic = ?", (nic,)).fetchone()
+        return dict(updated)
