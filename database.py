@@ -113,6 +113,14 @@ def init_db() -> None:
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_skills(
+            code TEXT PRIMARY KEY,
+            name TEXT NOT NULL
+        )
+        """
+    )
 
     # Likes (optional): employer can like/bookmark workers per job
     cursor.execute(
