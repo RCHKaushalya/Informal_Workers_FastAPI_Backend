@@ -40,11 +40,6 @@ def init_db() -> None:
         """
     )
 
-    # Backward compat: some older code used `ds`
-    if _column_exists(cursor, "users", "ds") and not _column_exists(cursor, "users", "ds_area"):
-        cursor.execute("ALTER TABLE users ADD COLUMN ds_area TEXT")
-        cursor.execute("UPDATE users SET ds_area = COALESCE(ds_area, ds)")
-
     # Ensure critical columns exist for new auth system
     if not _column_exists(cursor, "users", "pin"):
         cursor.execute("ALTER TABLE users ADD COLUMN pin TEXT DEFAULT '1234'")
@@ -55,7 +50,7 @@ def init_db() -> None:
     if not _column_exists(cursor, "users", "rating"):
         cursor.execute("ALTER TABLE users ADD COLUMN rating REAL DEFAULT 0")
 
-    # Jobs posted by employers (any user can be employer)
+    # Jobs table migration
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS jobs(
@@ -73,8 +68,12 @@ def init_db() -> None:
         )
         """
     )
+    if not _column_exists(cursor, "jobs", "created_at"):
+        cursor.execute("ALTER TABLE jobs ADD COLUMN created_at TEXT DEFAULT (datetime('now'))")
+    if not _column_exists(cursor, "jobs", "ds_area"):
+        cursor.execute("ALTER TABLE jobs ADD COLUMN ds_area TEXT DEFAULT ''")
 
-    # Applications: workers apply to jobs; employer updates status
+    # Applications table migration
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS applications(
@@ -87,8 +86,12 @@ def init_db() -> None:
         )
         """
     )
+    if not _column_exists(cursor, "applications", "worker_nic"):
+        cursor.execute("ALTER TABLE applications ADD COLUMN worker_nic TEXT DEFAULT ''")
+    if not _column_exists(cursor, "applications", "created_at"):
+        cursor.execute("ALTER TABLE applications ADD COLUMN created_at TEXT DEFAULT (datetime('now'))")
 
-    # Reviews: employer reviews worker after completion
+    # Reviews table migration
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS reviews(
@@ -103,6 +106,12 @@ def init_db() -> None:
         )
         """
     )
+    if not _column_exists(cursor, "reviews", "worker_nic"):
+        cursor.execute("ALTER TABLE reviews ADD COLUMN worker_nic TEXT DEFAULT ''")
+    if not _column_exists(cursor, "reviews", "created_at"):
+        cursor.execute("ALTER TABLE reviews ADD COLUMN created_at TEXT DEFAULT (datetime('now'))")
+
+    # Skill codes matching the mobile app constants (string ids)
 
     # Skill codes matching the mobile app constants (string ids)
     cursor.execute(
